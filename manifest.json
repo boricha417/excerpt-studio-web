@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "발췌 스튜디오",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "드래그한 글을 형광펜·밑줄·검열·치환·질감 배경으로 꾸며 PNG 발췌 카드로 저장합니다.",
   "action": {
     "default_title": "발췌 스튜디오"

@@ -357,6 +357,7 @@ window.__BALCHE_CSS = `
 
 .bs-mark-row {
   display: flex;
+  flex-wrap: wrap; /* 견본이 늘어 좁은 폭에서는 다음 줄로 */
   gap: 0.45rem;
   align-items: center;
 }
@@ -388,9 +389,43 @@ window.__BALCHE_CSS = `
   border: 1px dashed #cfcdc8;
   width: auto;
   padding: 0 0.55rem;
+  white-space: nowrap;
 }
 .bs-swatch-erase:hover {
   color: #2f3437;
+}
+.bs-swatch-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.bs-swatch-badge {
+  position: absolute;
+  right: -0.25rem;
+  bottom: -0.25rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.15rem;
+  border-radius: 4px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  color: #2f3437;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 0.9rem;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+}
+.bs-swatch-badge:hover {
+  background: #f1f0ee;
+}
+.bs-swatch-picker {
+  /* 뱃지(label)를 누르면 열리는 색 선택기. 화면에는 보이지 않는다. */
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .bs-rules {
