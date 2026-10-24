@@ -420,7 +420,9 @@
   let currentAnnotation = null;
 
   function annotateReplaced(base, rules) {
-    let chars = Array.from(base, (ch, i) => ({ ch, bs: i, be: i + 1 }));
+    // UTF-16 코드 유닛 단위로 쪼갠다. 마크 위치·토큰 index·startsWith가 모두 코드 유닛 기준이라
+    // Array.from(코드 포인트 단위)을 쓰면 이모지 뒤부터 위치가 어긋난다.
+    let chars = Array.from({ length: base.length }, (_, i) => ({ ch: base[i], bs: i, be: i + 1 }));
     for (const rule of rules) {
       if (!rule.find) continue;
       const find = rule.find;
@@ -431,7 +433,7 @@
         if (str.startsWith(find, i)) {
           const bs = chars[i].bs;
           const be = chars[i + find.length - 1].be;
-          for (const rc of rule.replace) out.push({ ch: rc, bs, be });
+          for (let k = 0; k < rule.replace.length; k++) out.push({ ch: rule.replace[k], bs, be });
           i += find.length;
         } else {
           out.push(chars[i]);
@@ -564,8 +566,15 @@
     if (statusLine) statusLine.textContent = message;
   }
 
+  let openSeq = 0;
   async function openModal(initialText) {
     if (modalOpen) closeModal();
+    // 설정을 읽는 동안은 아직 "열림"이 아니다. 그 사이 다시 호출되면(툴바 연타) 이전 호출은 조용히 물러난다.
+    // (전에는 읽기 전에 modalOpen=true를 두어, 연타 시 기본값으로 savePrefs가 실행돼 저장된 설정이 날아가고
+    //  오버레이가 두 장 생겨 첫 장은 닫히지 않았다)
+    const seq = ++openSeq;
+    const prefs = await storageGet();
+    if (seq !== openSeq || modalOpen) return;
     modalOpen = true;
 
     state.baseText = "";
@@ -574,8 +583,7 @@
     state.bg.imageData = null;
     state.bg.dim = 0;
     state.bg.bright = 0;
-    loadPrefsFrom(await storageGet());
-    if (!modalOpen) return; // 기다리는 사이 닫힘
+    loadPrefsFrom(prefs);
     if (state.bg.mode === "texture") state.textColor = TEXTURES[state.bg.texture].text;
 
     state.titleText = "";
@@ -684,14 +692,12 @@
     customFontRow.style.display = isCustomActive() ? "" : "none";
     controls.appendChild(customFontRow);
 
-    customFontInput.addEventListener(
-      "input",
-      debounce(() => {
-        state.customFont = customFontInput.value.trim();
-        state.fontFamily = state.customFont ? customStack(state.customFont) : "";
-        renderPreview();
-      }, 250),
-    );
+    const renderCustomFontSoon = debounce(() => renderPreview(), 250);
+    customFontInput.addEventListener("input", () => {
+      state.customFont = customFontInput.value.trim();
+      state.fontFamily = state.customFont ? customStack(state.customFont) : "";
+      renderCustomFontSoon();
+    });
 
     fontSelect.addEventListener("change", () => {
       const opt = fontSelect.selectedOptions[0];
@@ -913,13 +919,11 @@
       state.showTitle = titleCheck.checked;
       renderPreview();
     });
-    titleInput.addEventListener(
-      "input",
-      debounce(() => {
-        state.titleText = titleInput.value;
-        renderPreview();
-      }, 200),
-    );
+    const renderTitleSoon = debounce(() => renderPreview(), 200);
+    titleInput.addEventListener("input", () => {
+      state.titleText = titleInput.value; // 상태는 즉시 반영 (닫기 직전 입력이 저장에서 빠지지 않도록)
+      renderTitleSoon();
+    });
     titleRow.appendChild(titleCheck);
     titleRow.appendChild(titleInput);
     controls.appendChild(titleRow);
@@ -937,13 +941,11 @@
       state.showAuthor = authorCheck.checked;
       renderPreview();
     });
-    authorInput.addEventListener(
-      "input",
-      debounce(() => {
-        state.authorText = authorInput.value;
-        renderPreview();
-      }, 200),
-    );
+    const renderAuthorSoon = debounce(() => renderPreview(), 200);
+    authorInput.addEventListener("input", () => {
+      state.authorText = authorInput.value;
+      renderAuthorSoon();
+    });
     authorRow.appendChild(authorCheck);
     authorRow.appendChild(authorInput);
     controls.appendChild(authorRow);
@@ -1394,12 +1396,20 @@
   // ──────────────────────────────────────────────
   // PNG 저장
   // ──────────────────────────────────────────────
+  /** k 위치의 글자 하나. 서로게이트 쌍(이모지 등)은 두 코드 유닛을 한 글자로 돌려준다. */
+  function glyphAt(str, k) {
+    const cp = str.codePointAt(k);
+    return cp > 0xffff ? str.slice(k, k + 2) : str[k];
+  }
+
   function tokenizeParagraph(paragraph, baseIndex) {
     const tokens = [];
     let i = 0;
     while (i < paragraph.length) {
       const ch = paragraph[i];
-      if (ch === " " || ch === "\t") {
+      if (/\s/.test(ch)) {
+        // NBSP·\r 같은 공백 문자도 공백 토큰으로 본다. 아래 단어 루프가 \s에서 멈추므로
+        // 여기서 받지 않으면 빈 토큰만 쌓이고 i가 전진하지 않아 무한 루프에 빠진다.
         tokens.push({ kind: "space", text: " ", index: baseIndex + i });
         i += 1;
       } else if (CJK_RE.test(ch)) {
@@ -1442,19 +1452,21 @@
         if (entry.width > maxWidth && entry.kind === "word") {
           let piece = "";
           let pieceStart = entry.index;
-          for (let k = 0; k < entry.text.length; k++) {
-            const next = piece + entry.text[k];
+          for (let k = 0; k < entry.text.length; ) {
+            const glyph = glyphAt(entry.text, k);
+            const next = piece + glyph;
             if (widthOf(next) > maxWidth && piece) {
               const pw = widthOf(piece);
               if (lineWidth + pw > maxWidth && line.length > 0) pushLine(false);
               line.push({ kind: "word", text: piece, index: pieceStart, width: pw });
               lineWidth += pw;
               pushLine(false);
-              piece = entry.text[k];
+              piece = glyph;
               pieceStart = entry.index + k;
             } else {
               piece = next;
             }
+            k += glyph.length;
           }
           if (piece) {
             const pw = widthOf(piece);
@@ -1602,8 +1614,9 @@
       for (const token of line.tokens) {
         const tokenWidth = token.width + (token.kind === "space" ? spaceExtra : 0);
         let cx = x;
-        for (let k = 0; k < token.text.length; k++) {
-          const chWidth = token.text.length === 1 ? tokenWidth : measure.measureText(token.text[k]).width;
+        for (let k = 0; k < token.text.length; ) {
+          const glyph = glyphAt(token.text, k);
+          const chWidth = token.text.length === glyph.length ? tokenWidth : measure.measureText(glyph).width;
           const type = markAt(token.index + k);
           if (type === CENSOR) {
             flushUl();
@@ -1624,6 +1637,7 @@
             flushUl();
           }
           cx += chWidth;
+          k += glyph.length;
         }
         x += tokenWidth;
       }
@@ -1651,13 +1665,15 @@
             }
           } else {
             let cx = x;
-            for (let k = 0; k < token.text.length; k++) {
-              const chWidth = measure.measureText(token.text[k]).width;
+            for (let k = 0; k < token.text.length; ) {
+              const glyph = glyphAt(token.text, k);
+              const chWidth = measure.measureText(glyph).width;
               if (markAt(token.index + k) !== CENSOR) {
                 ctx.fillStyle = inkFor(token.index + k);
-                ctx.fillText(token.text[k], cx, baseline);
+                ctx.fillText(glyph, cx, baseline);
               }
               cx += chWidth;
+              k += glyph.length;
             }
           }
         }
