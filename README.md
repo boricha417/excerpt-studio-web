@@ -6,7 +6,7 @@
 
 스토어에 올리지 않은 확장이라 압축을 풀어 직접 로드합니다. 크롬·엣지·웨일 모두 같은 방법입니다.
 
-1. 이 저장소를 내려받아 폴더로 풉니다(`manifest.json`, `background.js`, `content.js`, `styles.js`, `icon128.png`).
+1. 저장소에 올려 둔 `발췌 스튜디오 웹확장_v1.1.2.zip`을 받아 폴더로 풉니다(`manifest.json`, `background.js`, `content.js`, `styles.js`, `icon128.png`). 저장소 전체를 "Download ZIP"으로 받았다면 안쪽 폴더를 씁니다.
 2. 주소창에 `chrome://extensions`(엣지는 `edge://extensions`)를 열고 오른쪽 위 **개발자 모드**를 켭니다.
 3. **압축해제된 확장 프로그램을 로드합니다**를 누르고 위 폴더를 고릅니다.
 4. 툴바의 퍼즐 아이콘에서 발췌 스튜디오를 **고정**해 두면 한 번에 누를 수 있습니다.
