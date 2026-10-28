@@ -10,6 +10,7 @@
   // 상수
   // ──────────────────────────────────────────────
   const PREFS_KEY = "bs-studio-prefs-web-v1";
+  const MAX_SITE_OVERRIDES = 100; // 사이트별 작품명·플랫폼 이름 기억 개수
   const INK = "#2F3437";
 
   const HIGHLIGHTS = {
@@ -158,6 +159,9 @@
     showAuthor: true,
     titleText: "",
     authorText: "",
+    siteOverrides: {}, // 사이트(호스트) → { title, author } 고쳐 쓴 것만 (기본값과 다를 때만 저장)
+    siteKey: "", // 이번 모달의 사이트 키
+    siteName: "", // 이번 모달에서 감지한 플랫폼 이름 (플랫폼 칸의 기본값)
     replaceRules: [],
     bg: { mode: "texture", color: "#FFFFFF", texture: "cream", pattern: "grain", imageData: null, dim: 0, bright: 0 },
   };
@@ -214,6 +218,17 @@
       if (typeof p.cornerRadius === "number") state.cornerRadius = Math.min(60, Math.max(0, p.cornerRadius));
       if (typeof p.showTitle === "boolean") state.showTitle = p.showTitle;
       if (typeof p.showAuthor === "boolean") state.showAuthor = p.showAuthor;
+      if (p.siteOverrides && typeof p.siteOverrides === "object" && !Array.isArray(p.siteOverrides)) {
+        const entries = [];
+        for (const [k, v] of Object.entries(p.siteOverrides)) {
+          if (typeof k !== "string" || !k || !v || typeof v !== "object") continue;
+          const entry = {};
+          if (typeof v.title === "string" && v.title !== "") entry.title = v.title;
+          if (typeof v.author === "string") entry.author = v.author;
+          if (Object.keys(entry).length) entries.push([k, entry]);
+        }
+        state.siteOverrides = Object.fromEntries(entries.slice(-MAX_SITE_OVERRIDES));
+      }
       if (Array.isArray(p.replaceRules)) {
         state.replaceRules = p.replaceRules
           .filter((r) => r && typeof r.find === "string" && typeof r.replace === "string")
@@ -230,7 +245,23 @@
       /* 무시 */
     }
   }
+  /**
+   * 작품명·플랫폼 이름이 기본값(빈 칸 / 감지된 사이트 이름)과 다르면 이 사이트 것으로 기억하고,
+   * 같으면(또는 되돌리면) 기억을 지운다. 가장 오래된 사이트부터 밀려난다.
+   */
+  function rememberSiteOverride() {
+    if (!state.siteKey) return;
+    const entry = {};
+    if (state.titleText !== "") entry.title = state.titleText;
+    if (state.authorText !== state.siteName) entry.author = state.authorText;
+    delete state.siteOverrides[state.siteKey]; // 다시 넣어 가장 최근 것으로 올린다
+    if (!Object.keys(entry).length) return;
+    state.siteOverrides[state.siteKey] = entry;
+    const keys = Object.keys(state.siteOverrides);
+    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_SITE_OVERRIDES))) delete state.siteOverrides[k];
+  }
   function savePrefs() {
+    rememberSiteOverride();
     storageSet({
       fontSize: state.fontSize,
       fontFamily: state.fontFamily,
@@ -247,6 +278,7 @@
       cornerRadius: state.cornerRadius,
       showTitle: state.showTitle,
       showAuthor: state.showAuthor,
+      siteOverrides: state.siteOverrides,
       replaceRules: state.replaceRules,
       bg: {
         mode: state.bg.mode === "image" ? "texture" : state.bg.mode,
@@ -450,6 +482,10 @@
   // ──────────────────────────────────────────────
   // 페이지 메타데이터 → 플랫폼 이름
   // ──────────────────────────────────────────────
+  /** 작품명·플랫폼 이름을 기억하는 단위. www.는 떼고 호스트명으로 묶는다(file:// 등 호스트가 없으면 기억하지 않음). */
+  function siteKey() {
+    return location.hostname.replace(/^www\./, "").toLowerCase();
+  }
   function detectSiteName() {
     const read = (key) => {
       const node = document.querySelector(`meta[property="${key}"], meta[name="${key}"]`);
@@ -635,8 +671,12 @@
     loadPrefsFrom(prefs);
     if (state.bg.mode === "texture") state.textColor = TEXTURES[state.bg.texture].text;
 
-    state.titleText = "";
-    state.authorText = detectSiteName();
+    state.siteKey = siteKey();
+    state.siteName = detectSiteName();
+    // 이 사이트에서 고쳐 쓴 작품명·플랫폼 이름이 있으면 그걸로 시작한다
+    const remembered = state.siteKey ? state.siteOverrides[state.siteKey] : undefined;
+    state.titleText = remembered && typeof remembered.title === "string" ? remembered.title : "";
+    state.authorText = remembered && typeof remembered.author === "string" ? remembered.author : state.siteName;
 
     const root = ensureShadow();
     overlay = el("div", "bs-overlay");
@@ -986,6 +1026,14 @@
     titleInput.type = "text";
     titleInput.placeholder = "캐릭터 이름";
     titleInput.value = state.titleText;
+    // 적은 게 있을 때만 보이는 되돌리기(비우기) 버튼 — 비우면 이 사이트의 기억도 지워진다
+    const titleRevert = el("button", "bs-icon-btn bs-revert", "↺");
+    titleRevert.type = "button";
+    titleRevert.title = "작품명 비우기 (이 사이트의 기억 삭제)";
+    const syncTitleRevert = () => {
+      titleRevert.classList.toggle("bs-revert--off", titleInput.value === "");
+    };
+    syncTitleRevert();
     titleCheck.addEventListener("change", () => {
       state.showTitle = titleCheck.checked;
       renderPreview();
@@ -993,10 +1041,18 @@
     const renderTitleSoon = debounce(() => renderPreview(), 200);
     titleInput.addEventListener("input", () => {
       state.titleText = titleInput.value; // 상태는 즉시 반영 (닫기 직전 입력이 저장에서 빠지지 않도록)
+      syncTitleRevert();
       renderTitleSoon();
+    });
+    titleRevert.addEventListener("click", () => {
+      titleInput.value = "";
+      state.titleText = "";
+      syncTitleRevert();
+      renderPreview();
     });
     titleRow.appendChild(titleCheck);
     titleRow.appendChild(titleInput);
+    titleRow.appendChild(titleRevert);
     controls.appendChild(titleRow);
 
     const authorRow = el("div", "bs-check-row");
@@ -1012,13 +1068,29 @@
       state.showAuthor = authorCheck.checked;
       renderPreview();
     });
+    // 감지된 사이트 이름과 다를 때만 보이는 되돌리기 버튼
+    const authorRevert = el("button", "bs-icon-btn bs-revert", "↺");
+    authorRevert.type = "button";
+    authorRevert.title = `사이트 이름(${state.siteName})으로 되돌리기`;
+    const syncAuthorRevert = () => {
+      authorRevert.classList.toggle("bs-revert--off", authorInput.value === state.siteName);
+    };
+    syncAuthorRevert();
     const renderAuthorSoon = debounce(() => renderPreview(), 200);
     authorInput.addEventListener("input", () => {
       state.authorText = authorInput.value;
+      syncAuthorRevert();
       renderAuthorSoon();
+    });
+    authorRevert.addEventListener("click", () => {
+      authorInput.value = state.siteName;
+      state.authorText = state.siteName;
+      syncAuthorRevert();
+      renderPreview();
     });
     authorRow.appendChild(authorCheck);
     authorRow.appendChild(authorInput);
+    authorRow.appendChild(authorRevert);
     controls.appendChild(authorRow);
 
     // ══ 배경 ═══════════════════════════════════

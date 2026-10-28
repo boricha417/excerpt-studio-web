@@ -319,6 +319,17 @@ window.__BALCHE_CSS = `
   outline: none;
   border-color: #b9b7b2;
 }
+.bs-revert {
+  flex-shrink: 0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+.bs-revert--off {
+  /* 숨겨도 자리는 남겨 작품명·플랫폼 입력칸 폭이 같게 */
+  visibility: hidden;
+  pointer-events: none;
+}
 .bs-color {
   width: 2.5rem;
   height: 1.75rem;
